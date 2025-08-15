@@ -23,7 +23,6 @@ Dibangun menggunakan **Flutter**, memanfaatkan **MediaPipe** untuk deteksi pose,
 - [Google ML Kit](https://developers.google.com/ml-kit) - Pemrosesan model machine learning.
 - Dependency utama:
     - `google_mlkit_pose_detection` - Deteksi pose tubuh.
-    - (Tambahkan dependency tambahan yang digunakan di project)
 
 ---
 
