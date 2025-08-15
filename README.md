@@ -54,7 +54,7 @@ Silakan gunakan dan modifikasi sesuai kebutuhan.
 
 ✨ Dibuat Oleh
 Nama Kamu
-📧 Email: your@email.com
+📧 Email: adamjhansi03@gmail.com
 
 markdown
 Copy
