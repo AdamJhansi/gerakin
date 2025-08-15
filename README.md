@@ -53,13 +53,5 @@ Proyek ini menggunakan lisensi MIT.
 Silakan gunakan dan modifikasi sesuai kebutuhan.
 
 ✨ Dibuat Oleh
-Nama Kamu
+M Adam Jhansi
 📧 Email: adamjhansi03@gmail.com
-
-markdown
-Copy
-Edit
-
-Kalau mau, aku bisa bikin **README.md ini ada logo dan banner** biar tampilannya lebih keren di GitHub.  
-Itu bakal bikin repositorimu kelihatan lebih profesional.  
-Mau aku buatkan juga?
