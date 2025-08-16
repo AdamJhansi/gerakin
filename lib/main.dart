@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
-import 'screens/pose_detector_screen.dart';
 import 'screens/splash_screen.dart';
 
 void main() async {
@@ -30,6 +29,15 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       home: SplashScreen(),
+      builder: (context, child) {
+        final mediaQuery = MediaQuery.of(context);
+        return MediaQuery(
+          data: mediaQuery.copyWith(
+            textScaler: const TextScaler.linear(1),
+          ),
+          child: child!,
+        );
+      },
     );
   }
 }

@@ -116,13 +116,13 @@ class PoseUtils {
       bool rightHandRaised = rightWrist.y < rightShoulder.y;
       
       if (leftHandRaised && rightHandRaised) {
-        statusList.add('Gerakan: Kedua tangan terangkat');
+        statusList.add('Gerakan Tangan: Kedua tangan terangkat');
       } else if (leftHandRaised) {
-        statusList.add('Gerakan: Tangan kiri terangkat');
+        statusList.add('Gerakan Tangan: Tangan kiri terangkat');
       } else if (rightHandRaised) {
-        statusList.add('Gerakan: Tangan kanan terangkat');
+        statusList.add('Gerakan Tangan: Tangan kanan terangkat');
       } else {
-        statusList.add('Gerakan: Tangan normal');
+        statusList.add('Gerakan Tangan: Tangan normal');
       }
     }
     
@@ -132,12 +132,12 @@ class PoseUtils {
       final rightKnee = pose.landmarks[PoseLandmarkType.rightKnee]!;
       final leftHip = pose.landmarks[PoseLandmarkType.leftHip]!;
       final rightHip = pose.landmarks[PoseLandmarkType.rightHip]!;
-      
+
       // Calculate knee-hip distance ratio for better squat detection
       double leftRatio = (leftKnee.y - leftHip.y) / imageSize.height;
       double rightRatio = (rightKnee.y - rightHip.y) / imageSize.height;
       double avgRatio = (leftRatio + rightRatio) / 2;
-      
+
       if (avgRatio > 0.15) { // Adjusted threshold for better accuracy
         statusList.add('Posisi: Berdiri');
       } else {
@@ -145,6 +145,53 @@ class PoseUtils {
         statusList.add('');
       }
     }
+
+    // if (hasKeypoints(pose, bodyKeypoints)) {
+    //   final leftShoulder = pose.landmarks[PoseLandmarkType.leftShoulder]!;
+    //   final rightShoulder = pose.landmarks[PoseLandmarkType.rightShoulder]!;
+    //   final leftHip = pose.landmarks[PoseLandmarkType.leftHip]!;
+    //   final rightHip = pose.landmarks[PoseLandmarkType.rightHip]!;
+    //   final leftKnee = pose.landmarks[PoseLandmarkType.leftKnee]!;
+    //   final rightKnee = pose.landmarks[PoseLandmarkType.rightKnee]!;
+    //
+    //   double avgShoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+    //   double avgHipY = (leftHip.y + rightHip.y) / 2;
+    //   double avgKneeY = (leftKnee.y + rightKnee.y) / 2;
+    //
+    //   double shoulderToHip = (avgHipY - avgShoulderY) / imageSize.height;
+    //   double hipToKnee = (avgKneeY - avgHipY) / imageSize.height;
+    //
+    //   double upperBodyRatio = shoulderToHip.abs();
+    //   double lowerBodyRatio = hipToKnee.abs();
+    //
+    //   const double upperThreshold = 0.15;
+    //   const double lowerThreshold = 0.20;
+    //
+    //   bool isStanding = upperBodyRatio < upperThreshold &&
+    //       lowerBodyRatio > lowerThreshold;
+    //
+    //   if (isStanding) {
+    //     // double kneeAngleLeft = PoseUtils.calculateAngle(
+    //     //     leftHip,
+    //     //     leftKnee,
+    //     //     pose.landmarks[PoseLandmarkType.leftAnkle]!
+    //     // );
+    //     //
+    //     // double kneeAngleRight = PoseUtils.calculateAngle(
+    //     //     rightHip,
+    //     //     rightKnee,
+    //     //     pose.landmarks[PoseLandmarkType.rightAnkle]!
+    //     // );
+    //
+    //     // bool kneesStraight = kneeAngleLeft > 160 && kneeAngleRight > 160;
+    //
+    //     // statusList.add('Posisi: ${kneesStraight ? 'Berdiri' : 'Berdiri (lutut tertekuk)'}');
+    //     statusList.add('Posisi: Berdiri');
+    //
+    //   } else {
+    //     statusList.add('Posisi: -');
+    //   }
+    // }
     
     if (statusList.isEmpty) {
       statusList.add('Bergeraklah agar terdeteksi lebih baik');
