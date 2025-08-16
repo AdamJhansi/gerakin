@@ -28,7 +28,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.black),
         useMaterial3: true,
       ),
-      home: SplashScreen(),
+      home: const SplashScreen(),
       builder: (context, child) {
         final mediaQuery = MediaQuery.of(context);
         return MediaQuery(
