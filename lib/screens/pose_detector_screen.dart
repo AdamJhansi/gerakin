@@ -1,10 +1,11 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:gerakin/utils/pose_utils.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:permission_handler/permission_handler.dart';
-import '../utils/pose_utils.dart';
 
 class PoseDetectorView extends StatefulWidget {
   final CameraDescription camera;
@@ -29,12 +30,36 @@ class _PoseDetectorViewState extends State<PoseDetectorView> {
   final int _historySize = 5;
   final double _confidenceThreshold = 0.7;
 
+  int _fps = 0;
+  final List<DateTime> _frameTimestamps = [];
+  late Stopwatch _fpsStopwatch;
+
   @override
   void initState() {
     super.initState();
     _initializeCamera();
     _initializePoseDetector();
+    // _startFpsTimer();
+    _fpsStopwatch = Stopwatch();
+    _fpsStopwatch.start();
   }
+
+  // void _startFpsTimer() {
+  //   _fpsTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+  //     if (mounted) {
+  //       final now = DateTime.now();
+  //
+  //       // Remove timestamps older than 1 second
+  //       _frameTimes.removeWhere((timestamp) =>
+  //         now.difference(timestamp).inMilliseconds > 1000);
+  //
+  //       // Calculate FPS based on frames in the last second
+  //       setState(() {
+  //         _fps = _frameTimes.length + 15;
+  //       });
+  //     }
+  //   });
+  // }
 
   Future<void> _requestCameraPermission() async {
     final status = await Permission.camera.request();
@@ -53,7 +78,6 @@ class _PoseDetectorViewState extends State<PoseDetectorView> {
         return;
       }
 
-      // controller lokal untuk menghindari race
       final controller = CameraController(
         cameras![_cameraIndex],
         ResolutionPreset.high,
@@ -125,92 +149,104 @@ class _PoseDetectorViewState extends State<PoseDetectorView> {
     }
   }
 
-  Future<void> _processCameraImage(CameraImage image) async {
-    if (!_canProcess || _isBusy || _cameraController == null) return;
-    _isBusy = true;
-
-    final int imageRotation = cameras![_cameraIndex].sensorOrientation;
-    final InputImageRotation rotation = InputImageRotation.values.firstWhere(
-          (element) => element.rawValue == imageRotation,
+  InputImage _createInputImage(CameraImage image) {
+    final rotation = InputImageRotation.values.firstWhere(
+          (e) => e.rawValue == cameras![_cameraIndex].sensorOrientation,
       orElse: () => InputImageRotation.rotation0deg,
     );
 
-    try {
-      final InputImage inputImage;
-      if (Platform.isAndroid) {
-        final WriteBuffer allBytes = WriteBuffer();
-        for (Plane plane in image.planes) {
-          allBytes.putUint8List(plane.bytes);
-        }
-        final bytes = allBytes.done().buffer.asUint8List();
-
-        inputImage = InputImage.fromBytes(
-          bytes: bytes,
-          metadata: InputImageMetadata(
-            size: Size(image.width.toDouble(), image.height.toDouble()),
-            rotation: rotation,
-            format: InputImageFormat.yuv420,
-            bytesPerRow: image.planes[0].bytesPerRow,
-          ),
-        );
-      } else {
-        inputImage = InputImage.fromBytes(
-          bytes: image.planes[0].bytes,
-          metadata: InputImageMetadata(
-            size: Size(image.width.toDouble(), image.height.toDouble()),
-            rotation: rotation,
-            format: InputImageFormat.bgra8888,
-            bytesPerRow: image.planes[0].bytesPerRow,
-          ),
-        );
+    if (Platform.isAndroid) {
+      final WriteBuffer allBytes = WriteBuffer();
+      for (Plane plane in image.planes) {
+        allBytes.putUint8List(plane.bytes);
       }
+      final bytes = allBytes.done().buffer.asUint8List();
 
-      final poses = await _poseDetector?.processImage(inputImage);
-      final imageSize = Size(image.width.toDouble(), image.height.toDouble());
+      return InputImage.fromBytes(
+        bytes: bytes,
+        metadata: InputImageMetadata(
+          size: Size(image.width.toDouble(), image.height.toDouble()),
+          rotation: rotation,
+          format: InputImageFormat.yuv420,
+          bytesPerRow: image.planes[0].bytesPerRow,
+        ),
+      );
+    } else {
+      return InputImage.fromBytes(
+        bytes: image.planes[0].bytes,
+        metadata: InputImageMetadata(
+          size: Size(image.width.toDouble(), image.height.toDouble()),
+          rotation: rotation,
+          format: InputImageFormat.bgra8888,
+          bytesPerRow: image.planes[0].bytesPerRow,
+        ),
+      );
+    }
+  }
 
-      if (poses != null && poses.isNotEmpty) {
-        final pose = poses.first;
-        final Map<PoseLandmarkType, PoseLandmark> filteredLandmarks = {};
+  Map<PoseLandmarkType, PoseLandmark> _filterLandmarks(
+      Map<PoseLandmarkType, PoseLandmark> landmarks) {
+    return landmarks..removeWhere((_, v) => v.likelihood < _confidenceThreshold);
+  }
 
-        pose.landmarks.forEach((type, landmark) {
-          if (landmark.likelihood >= _confidenceThreshold) {
-            filteredLandmarks[type] = landmark;
-          }
-        });
+  Future<void> _processCameraImage(CameraImage image) async {
+    final now = DateTime.now();
+    _frameTimestamps.add(now);
 
-        final filteredPose = Pose(landmarks: filteredLandmarks);
-        final smoothedPose = PoseUtils.applySmoothing(
-          filteredPose,
-          _landmarkHistory,
-          _historySize,
-        );
+    _frameTimestamps.removeWhere((ts) => now.difference(ts).inSeconds >= 1);
 
-        if (mounted) {
-          if (filteredLandmarks.length >= 4) {
-            final statusList = PoseUtils.analyzePose(smoothedPose, imageSize);
-            setState(() {
-              _text = statusList.join('\n');
-            });
-          } else {
-            setState(() {
-              _text = 'Bergeraklah agar terdeteksi lebih baik';
-            });
-          }
-        }
-      } else {
-        if (mounted) {
-          setState(() {
-            _text = 'Tidak ada pose terdeteksi';
-          });
-        }
-      }
-    } catch (e) {
-      debugPrint('Error pada deteksi pose: $e');
+    if (_fpsStopwatch.elapsedMilliseconds >= 500) {
       if (mounted) {
-        final s = e.toString();
         setState(() {
-          _text = 'Error: ${s.substring(0, s.length > 50 ? 50 : s.length)}';
+          _fps = _frameTimestamps.length;
         });
+      }
+      _fpsStopwatch.reset();
+      _fpsStopwatch.start();
+    }
+
+    if (!_canProcess || _isBusy || _cameraController == null) return;
+    _isBusy = true;
+
+    try {
+      final InputImage inputImage = _createInputImage(image);
+      final poses = await _poseDetector?.processImage(inputImage);
+
+      if (poses == null || poses.isEmpty) {
+        if (mounted) {
+          setState(() => _text = 'Tidak ada pose terdeteksi');
+        }
+        return;
+      }
+
+      final pose = poses.first;
+      final filteredLandmarks = _filterLandmarks(pose.landmarks);
+
+      if (filteredLandmarks.length < 4) {
+        if (mounted) {
+          setState(() => _text = 'Bergeraklah agar terdeteksi lebih baik');
+        }
+        return;
+      }
+
+      final smoothedPose = PoseUtils.applySmoothing(
+        Pose(landmarks: filteredLandmarks),
+        _landmarkHistory,
+        _historySize,
+      );
+
+      if (mounted) {
+        final statusList = PoseUtils.analyzePose(
+            smoothedPose,
+            Size(image.width.toDouble(), image.height.toDouble())
+        );
+        setState(() => _text = statusList.join('\n'));
+      }
+
+    } catch (e) {
+      debugPrint('Error: $e');
+      if (mounted) {
+        setState(() => _text = 'Error: ${e.toString().substring(0, 50)}');
       }
     } finally {
       _isBusy = false;
@@ -219,24 +255,16 @@ class _PoseDetectorViewState extends State<PoseDetectorView> {
 
   @override
   void dispose() {
+    _fpsStopwatch.stop();
+    _frameTimestamps.clear();
     _canProcess = false;
 
-    try {
-      _poseDetector?.close();
-    } catch (_) {}
+    _poseDetector?.close();
 
     final c = _cameraController;
-    _cameraController = null;
-
     if (c != null) {
-      try {
-        if (c.value.isStreamingImages) {
-          c.stopImageStream();
-        }
-      } catch (_) {}
-      try {
-        c.dispose();
-      } catch (_) {}
+      if (c.value.isStreamingImages) c.stopImageStream();
+      c.dispose();
     }
 
     super.dispose();
@@ -290,6 +318,40 @@ class _PoseDetectorViewState extends State<PoseDetectorView> {
             child: AspectRatio(
               aspectRatio: 9 / 16,
               child: CameraPreview(_cameraController!),
+            ),
+          ),
+          // FPS Counter - Top Left
+          Positioned(
+            top: 20,
+            left: 20,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.7),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white, width: 1),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.speed,
+                    color: _fps >= 24 ? Colors.green :
+                    _fps >= 15 ? Colors.orange : Colors.red,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '$_fps FPS',
+                    style: TextStyle(
+                      color: _fps >= 24 ? Colors.green :
+                      _fps >= 15 ? Colors.orange : Colors.red,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           if (_text != null)
