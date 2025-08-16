@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
@@ -10,7 +9,7 @@ import '../utils/pose_utils.dart';
 class PoseDetectorView extends StatefulWidget {
   final CameraDescription camera;
 
-  const PoseDetectorView({super.key, required this.camera,});
+  const PoseDetectorView({super.key, required this.camera});
 
   @override
   State<PoseDetectorView> createState() => _PoseDetectorViewState();
@@ -25,8 +24,7 @@ class _PoseDetectorViewState extends State<PoseDetectorView> {
   String? _text;
   List<CameraDescription>? cameras;
   int _cameraIndex = 0;
-  
-  // Optimized smoothing parameters
+
   Map<PoseLandmarkType, List<PoseLandmark>> _landmarkHistory = {};
   final int _historySize = 5;
   final double _confidenceThreshold = 0.7;
@@ -44,44 +42,67 @@ class _PoseDetectorViewState extends State<PoseDetectorView> {
       debugPrint('Camera permission denied');
     }
   }
-  
+
   Future<void> _initializeCamera() async {
     await _requestCameraPermission();
-    
+
     try {
-      cameras = await availableCameras();
+      cameras ??= await availableCameras();
       if (cameras == null || cameras!.isEmpty) {
         debugPrint('No cameras available');
         return;
       }
 
-      _cameraController = CameraController(
+      // controller lokal untuk menghindari race
+      final controller = CameraController(
         cameras![_cameraIndex],
         ResolutionPreset.high,
         enableAudio: false,
       );
 
-      _initializeControllerFuture = _cameraController!.initialize().then((_) {
-        if (!mounted) return;
-        _cameraController!.startImageStream(_processCameraImage);
-        setState(() {});
+      _initializeControllerFuture = controller.initialize();
+      await _initializeControllerFuture;
+
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+
+      if (!controller.value.isStreamingImages) {
+        await controller.startImageStream(_processCameraImage);
+      }
+
+      setState(() {
+        _cameraController = controller;
       });
     } catch (e) {
       debugPrint('Error initializing camera: $e');
     }
   }
-  
+
   Future<void> _switchCamera() async {
     if (cameras == null || cameras!.isEmpty) return;
-    
+
     _cameraIndex = (_cameraIndex + 1) % cameras!.length;
-    await _cameraController?.stopImageStream();
-    await _cameraController?.dispose();
-    
+
+    final old = _cameraController;
+    _cameraController = null;
     setState(() {
       _text = null;
-      _initializeCamera();
     });
+
+    try {
+      if (old != null) {
+        if (old.value.isStreamingImages) {
+          await old.stopImageStream();
+        }
+        await old.dispose();
+      }
+    } catch (e) {
+      debugPrint('Error disposing old camera: $e');
+    }
+
+    await _initializeCamera();
   }
 
   void _initializePoseDetector() async {
@@ -94,25 +115,35 @@ class _PoseDetectorViewState extends State<PoseDetectorView> {
     _canProcess = true;
   }
 
+  bool _isControllerReadySafely() {
+    final c = _cameraController;
+    if (c == null) return false;
+    try {
+      return c.value.isInitialized;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _processCameraImage(CameraImage image) async {
     if (!_canProcess || _isBusy || _cameraController == null) return;
     _isBusy = true;
 
-    final InputImage inputImage;
     final int imageRotation = cameras![_cameraIndex].sensorOrientation;
     final InputImageRotation rotation = InputImageRotation.values.firstWhere(
-      (element) => element.rawValue == imageRotation,
+          (element) => element.rawValue == imageRotation,
       orElse: () => InputImageRotation.rotation0deg,
     );
-    
+
     try {
+      final InputImage inputImage;
       if (Platform.isAndroid) {
         final WriteBuffer allBytes = WriteBuffer();
         for (Plane plane in image.planes) {
           allBytes.putUint8List(plane.bytes);
         }
         final bytes = allBytes.done().buffer.asUint8List();
-        
+
         inputImage = InputImage.fromBytes(
           bytes: bytes,
           metadata: InputImageMetadata(
@@ -133,36 +164,38 @@ class _PoseDetectorViewState extends State<PoseDetectorView> {
           ),
         );
       }
-    
+
       final poses = await _poseDetector?.processImage(inputImage);
       final imageSize = Size(image.width.toDouble(), image.height.toDouble());
-      
+
       if (poses != null && poses.isNotEmpty) {
         final pose = poses.first;
         final Map<PoseLandmarkType, PoseLandmark> filteredLandmarks = {};
-        
+
         pose.landmarks.forEach((type, landmark) {
           if (landmark.likelihood >= _confidenceThreshold) {
             filteredLandmarks[type] = landmark;
           }
         });
-        
+
         final filteredPose = Pose(landmarks: filteredLandmarks);
         final smoothedPose = PoseUtils.applySmoothing(
-          filteredPose, 
+          filteredPose,
           _landmarkHistory,
-          _historySize
+          _historySize,
         );
-        
+
         if (mounted) {
-          setState(() {
-            if (filteredLandmarks.length >= 4) {
-              final statusList = PoseUtils.analyzePose(smoothedPose, imageSize);
+          if (filteredLandmarks.length >= 4) {
+            final statusList = PoseUtils.analyzePose(smoothedPose, imageSize);
+            setState(() {
               _text = statusList.join('\n');
-            } else {
+            });
+          } else {
+            setState(() {
               _text = 'Bergeraklah agar terdeteksi lebih baik';
-            }
-          });
+            });
+          }
         }
       } else {
         if (mounted) {
@@ -174,27 +207,44 @@ class _PoseDetectorViewState extends State<PoseDetectorView> {
     } catch (e) {
       debugPrint('Error pada deteksi pose: $e');
       if (mounted) {
+        final s = e.toString();
         setState(() {
-          _text = 'Error: ${e.toString().substring(0, e.toString().length > 50 ? 50 : e.toString().length)}';
+          _text = 'Error: ${s.substring(0, s.length > 50 ? 50 : s.length)}';
         });
       }
+    } finally {
+      _isBusy = false;
     }
-
-    _isBusy = false;
   }
 
   @override
   void dispose() {
     _canProcess = false;
-    _poseDetector?.close();
-    _cameraController?.stopImageStream();
-    _cameraController?.dispose();
+
+    try {
+      _poseDetector?.close();
+    } catch (_) {}
+
+    final c = _cameraController;
+    _cameraController = null;
+
+    if (c != null) {
+      try {
+        if (c.value.isStreamingImages) {
+          c.stopImageStream();
+        }
+      } catch (_) {}
+      try {
+        c.dispose();
+      } catch (_) {}
+    }
+
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+    if (!_isControllerReadySafely()) {
       return const Scaffold(
         backgroundColor: Colors.white,
         body: Center(
@@ -221,7 +271,7 @@ class _PoseDetectorViewState extends State<PoseDetectorView> {
         backgroundColor: Colors.black,
         actions: [
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8.0,horizontal: 16.0),
+            padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
             child: IconButton(
               icon: const Icon(Icons.flip_camera_ios),
               iconSize: 40,
@@ -242,11 +292,6 @@ class _PoseDetectorViewState extends State<PoseDetectorView> {
               child: CameraPreview(_cameraController!),
             ),
           ),
-          // CameraPreview(_cameraController!),
-          // Container(
-          //   color: Colors.red,
-          //   // color: Colors.black.withOpacity(0.1),
-          // ),
           if (_text != null)
             Align(
               alignment: Alignment.bottomCenter,
@@ -268,15 +313,15 @@ class _PoseDetectorViewState extends State<PoseDetectorView> {
                         final label = parts[0];
                         final value = parts[1];
                         Color valueColor = Colors.white;
-                        
-                        if (value.contains('normal') || 
-                            value == 'Berdiri' || 
+
+                        if (value.contains('normal') ||
+                            value == 'Berdiri' ||
                             value == 'Kedua siku lurus') {
                           valueColor = Colors.green;
                         } else {
                           valueColor = Colors.orange;
                         }
-                        
+
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 6),
                           child: Row(
@@ -319,4 +364,4 @@ class _PoseDetectorViewState extends State<PoseDetectorView> {
       ),
     );
   }
-} 
+}
